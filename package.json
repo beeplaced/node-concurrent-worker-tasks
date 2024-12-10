@@ -6,9 +6,21 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beeplaced/node-concurrent-worker-tasks.git"
+  },
+  "keywords": [
+    "node.js",
+    "worker_treads",
+    "workerpool",
+    "taskqueue"
+  ],
+  "author": "beeplaced",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/beeplaced/node-concurrent-worker-tasks/issues"
+  },
   "dependencies": {
     "os": "^0.1.2"
   }
