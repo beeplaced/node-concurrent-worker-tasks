@@ -140,6 +140,9 @@ Interpret the Results: After running ab, it will display various statistics such
 
 ## Changelog
 
+Version 0.1.0:
+- entryTask() > run()
+
 Version 0.0.2:
 - Initial release with worker pool management.
 - Implemented task queue system.

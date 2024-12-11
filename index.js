@@ -57,11 +57,34 @@ class WorkerPool {
         this.buildPool();
     }
 
-    terminateAllWorkers() {
-        while (this.pool.length > 0) {
-            const { worker } = this.pool.pop();
-            worker.terminate();
+    run = async (task) => {//Main Entry
+        try {
+            let status = 200;
+            if (!taskManager.canExecuteTask()) {
+                status = 429;
+            }
+            return { status, ...await this.runTask(task) };         
+        } catch (err) {
+            return { status: 300, err };
+        } finally {
+            this.terminateExcessWorkers();
         }
+    };
+
+    buildPool = async () => {
+        return new Promise(async (resolve) => {
+            for (let i = 0; i < this.poolSize; i++) {
+                const worker = new Worker(this.workerFilePath, { workerData });
+                const workerId = `-${i + 1}-`;
+
+                const handleError = (error) => {
+                    console.error(`Worker ${workerId} error:`, error);
+                };
+                worker.on('error', handleError);
+                this.pool.push({ id: workerId, worker });
+            }
+            resolve();
+        });
     }
 
     addNewWorkerToPool = async () => {
@@ -124,22 +147,6 @@ class WorkerPool {
         });
     }
 
-    buildPool = async () => {
-        return new Promise(async (resolve) => {
-            for (let i = 0; i < this.poolSize; i++) {
-                const worker = new Worker(this.workerFilePath, { workerData });
-                const workerId = `-${i + 1}-`;
-
-                const handleError = (error) => {
-                    console.error(`Worker ${workerId} error:`, error);
-                };
-                worker.on('error', handleError);
-                this.pool.push({ id: workerId, worker });
-            }
-            resolve();
-        });
-    }
-
     createLog(freeWorker_id) {
         tasks.push(freeWorker_id);
         const freeMemory = os.freemem() / 1024 / 1024; // Convert to MB
@@ -164,23 +171,16 @@ class WorkerPool {
         return this.returnLog ? { result, ...this.createLog(freeWorker.id) } : { result };
     }
 
-    entryTask = async (task) => {
-        try {
-            let status = 200;
-            if (!taskManager.canExecuteTask()) {
-                status = 429;
-            }
-            return { status, ...await this.runTask(task) };         
-        } catch (err) {
-            return { status: 300, err };
-        } finally {
-            this.terminateExcessWorkers();
-        }
-    };
-
     terminateExcessWorkers() {
         while (this.pool.length > this.minWorkers) {
             console.log('terminateExcessWorkers', this.pool.length);
+            const { worker } = this.pool.pop();
+            worker.terminate();
+        }
+    }
+
+    terminateAllWorkers() {
+        while (this.pool.length > 0) {
             const { worker } = this.pool.pop();
             worker.terminate();
         }
