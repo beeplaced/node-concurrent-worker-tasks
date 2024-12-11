@@ -38,7 +38,7 @@ Import the WorkerPool class from the installed module and set up a worker pool w
 ```js
 const WorkerPool = require('node-concurrent-worker-tasks');
 // Create a worker pool with 30 workers, using 'Worker.js' as the worker script
-const TaskPool = new WorkerPool(poolSize = 30, './Worker.js', returnLog = false);
+const TaskPool = new WorkerPool(poolSize = 30, './Worker.js', returnLog = false, memThreshold = 90);
 
 ```
   * Create the Worker.js File in ypur repro containing your functions. Note that functions can be handled in external libraries and classes (fn is representative for your functions, used with a delay in the example)
@@ -62,7 +62,7 @@ Create functions to execute tasks using the worker pool. For example, you can de
 ```js
 async function executeTask() {
     try {
-        const result = await TaskPool.runTask({ fn: 'myfunc', params: { set: true } });
+        const result = await TaskPool.run({ fn: 'myfunc', params: { set: true } });
         console.log(result);
     } catch (error) {
         console.error(error);
@@ -91,7 +91,11 @@ executeTasksMultipleTimes();
 returnLog = false
 {
   status: 200,
-  result: { execute: true, taskId: 'd92fb982-02bc-4af0-a241-869dacb9f6ba' },
+  result: { 
+    execute: true,
+    taskId: 'd92fb982-02bc-4af0-a241-869dacb9f6ba',
+    capacity: true 
+    }
 }
 ```
 
@@ -99,13 +103,12 @@ returnLog = false
 returnLog = true
 {
   status: 429,
-  result: { execute: true, taskId: 'd92fb982-02bc-4af0-a241-869dacb9f6ba' },
-  worker: '-1-',
-  resultFreeMemory: '10445.57 MB',
-  memUsedMB: '159.75 MB',
-  memUsedPercent: '1.5%',
-  poolLength: '29 worker',
-  executed: '99 tasks'
+  result: {
+    execute: true,
+    taskId: 'c0d2085a-8ab8-4aeb-ae37-f734bc65f814',
+    log: { worker: '-1-', poolLength: '30 worker', executed: '99 tasks' },
+    capacity: true
+  }
 }
 ```
 

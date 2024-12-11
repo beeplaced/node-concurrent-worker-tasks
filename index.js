@@ -41,7 +41,7 @@ class WorkerPool {
      * @param {string} workerFilePath - The file path of the worker script.
      * @param {number} minWorkers - The maximum number of workers allowed in the pool.
      */
-    constructor(poolSize, workerFilePath, returnLog=true) {
+    constructor(poolSize, workerFilePath, returnLog=true, memThreshold=90) {
         process.on('exit', () => {
             this.terminateAllWorkers();
         });
@@ -51,6 +51,7 @@ class WorkerPool {
         });
 
         /** @type {number} */ this.poolSize = poolSize;
+        /** @type {number} */ this.memThreshold = memThreshold;      
         /** @type {boolean} */ this.returnLog = returnLog; 
         /** @type {Array<WorkerObject>} */ this.pool = [];
         /** @type {string} */ this.workerFilePath = workerFilePath;
@@ -65,7 +66,7 @@ class WorkerPool {
             }
             return { status, ...await this.runTask(task) };         
         } catch (err) {
-            return { status: 300, err };
+            return { status: err.status || 500, message: err.message || 'something went wrong' };
         } finally {
             this.terminateExcessWorkers();
         }
@@ -149,27 +150,39 @@ class WorkerPool {
 
     createLog(freeWorker_id) {
         tasks.push(freeWorker_id);
-        const freeMemory = os.freemem() / 1024 / 1024; // Convert to MB
-        const memUsed = freeMemoryAvailable - freeMemory;
-        return { 
+
+        return {
             worker: freeWorker_id, 
-            resultFreeMemory: `${freeMemory.toFixed(2)} MB`, 
-            memUsedMB: `${memUsed.toFixed(2)} MB`, 
-            memUsedPercent: `${((memUsed / freeMemoryAvailable) * 100).toFixed(1)}%`, 
             poolLength: `${this.pool.length} worker`,
-            executed: `${tasks.length} tasks` 
+            executed: `${tasks.length} tasks`,
         };
     }
 
+    getMemPercent = () => {
+        const freeMemory = os.freemem() / 1024 / 1024; // Convert to MB
+        const memUsed = freeMemoryAvailable - freeMemory;
+        const memPercent = ((memUsed / freeMemoryAvailable) * 100).toFixed(1);
+    
+        if (memPercent > 90) {
+            throw new CustomError('Server capacity is low. Please try again later.', 503);
+        }
+    
+        return memPercent < this.memThreshold
+    };
+    
     runTask = async (task) => {
         while (this.pool.length === 0) {
             await this.buildPool();
-            if (this.pool.length > 0) break;
         }
-        const freeWorker = this.pool.shift();
+        const freeWorker = this.pool.shift(); // Get a worker
+        const memStats = this.getMemPercent(); // Check memory before task execution
         const result = await this.executeWorker(freeWorker, task);
-        return this.returnLog ? { result, ...this.createLog(freeWorker.id) } : { result };
-    }
+        if (this.returnLog) {
+            result.log = this.createLog(freeWorker.id);
+        }
+        result.capacity = memStats
+        return { result };
+    };
 
     terminateExcessWorkers() {
         while (this.pool.length > this.minWorkers) {
