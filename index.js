@@ -55,7 +55,14 @@ class WorkerPool {
         /** @type {boolean} */ this.returnLog = returnLog; 
         /** @type {Array<WorkerObject>} */ this.pool = [];
         /** @type {string} */ this.workerFilePath = workerFilePath;
+
+        this.initialMemory = os.totalmem() - os.freemem(); // Initial memory usage
+        console.log(`Initial Memory Usage: ${this.formatBytes(this.initialMemory)}`);
         this.buildPool();
+    }
+
+    formatBytes(bytes) {
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
     }
 
     run = async (task) => {//Main Entry
@@ -98,8 +105,17 @@ class WorkerPool {
 
                 const newWorker = new Worker(this.workerFilePath, { workerData });
                 const workerId = `-${this.pool.length + 1}-`;
+
+                const beforeMemory = os.totalmem() - os.freemem();
+                const beforeCPU = process.cpuUsage();
+
                 newWorker.once('online', () => {
-                    const workerItem = { id: workerId, worker: newWorker };
+                const afterMemory = os.totalmem() - os.freemem();
+                const afterCPU = process.cpuUsage(beforeCPU);
+    
+                console.log(`Worker-${workerId} Created | Memory Used: ${this.formatBytes(afterMemory - beforeMemory)}`);
+    
+                const workerItem = { id: workerId, worker: newWorker };
                     if (this.pool.length < this.poolSize) this.pool.push(workerItem);
                     resolve(workerItem);
                 });
@@ -113,40 +129,52 @@ class WorkerPool {
     }
 
     executeWorker = async (workerFromPool, task) => {
-        return new Promise(async (resolve) => {
+        return new Promise(async (resolve, reject) => {
             const { id, worker } = workerFromPool;
             if (!worker || typeof worker.on !== 'function') {
                 const nextWorker = await this.addNewWorkerToPool();
-                resolve(await this.executeWorker(nextWorker, task));
+                return resolve(await this.executeWorker(nextWorker, task));
             }
-
+    
+            // Capture resource usage before execution
+            const beforeMemory = process.memoryUsage().heapUsed;
+            const beforeCPU = process.cpuUsage();
+    
             const cleanup = () => {
                 worker.removeListener('message', messageListener);
                 worker.removeListener('error', errorListener);
             };
-
+    
             const messageListener = (data) => {
+                // Capture resource usage after execution
+                const afterMemory = process.memoryUsage().heapUsed;
+                const afterCPU = process.cpuUsage(beforeCPU);
+    
+                console.log(`Worker-${id} Executed Task`);
+                console.log(`  Memory Used: ${(afterMemory - beforeMemory) / 1024 / 1024} MB`);
+                console.log(`  CPU Time: User ${afterCPU.user / 1000}ms, System ${afterCPU.system / 1000}ms`);
+    
                 resolve(data);
                 if (this.pool.length < this.poolSize) {
                     this.pool.push(workerFromPool);
                 }
                 cleanup();
             };
-
+    
             const errorListener = (error) => {
                 cleanup();
-                reject(new Error(`Worker failed during task execution: ${error.message || error}`));
+                reject(new Error(`Worker-${id} failed during task execution: ${error.message || error}`));
             };
-
+    
             worker.on('message', messageListener);
             worker.on('error', errorListener);
             try {
                 worker.postMessage(task);
             } catch (err) {
-                reject(new Error(`Failed to post task to worker: ${err.message || err}`));
+                reject(new Error(`Worker-${id} failed to post task: ${err.message || err}`));
             }
         });
-    }
+    };   
 
     createLog(freeWorker_id) {
         tasks.push(freeWorker_id);
@@ -163,7 +191,7 @@ class WorkerPool {
         const memUsed = freeMemoryAvailable - freeMemory;
         const memPercent = ((memUsed / freeMemoryAvailable) * 100).toFixed(1);
     
-        if (memPercent > 90) {
+        if (memPercent > this.memThreshold) {
             throw new CustomError('Server capacity is low. Please try again later.', 503);
         }
     
