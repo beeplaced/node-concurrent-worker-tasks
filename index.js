@@ -40,6 +40,7 @@ class WorkerPool {
      * @param {number} maxWorkers - The maximum number of workers allowed in the pool.
      */
     constructor(poolSize, workerFilePath, returnLog=true, minPercentage=20) {
+        console.log("build")
         process.on('exit', () => {
             this.terminateAllWorkers();
         });
@@ -79,6 +80,7 @@ class WorkerPool {
     };
 
     run = async (task) => {//Main Entry
+        console.log("run")
         if (this.pool.length === 0) await this.addWorkerToPool()
             const workerFromPool = this.pool[this.workerIndex]; // Take last worker from pool
             const { id, worker } = workerFromPool;
