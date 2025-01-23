@@ -3,6 +3,9 @@ const CustomError = require('./types/customError');
 const os = require('os');
 const totalMem = os.totalmem();  // Total RAM in bytes
 const formatBytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+console.log("totalMem",formatBytes(totalMem))
+console.log("freeMem",formatBytes(os.freemem()))
+
 
 class TaskManager {
     constructor(idleThreshold = 100) {
