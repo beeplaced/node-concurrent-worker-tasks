@@ -1,9 +1,8 @@
-const { Worker, workerData } = require('worker_threads');
+const { Worker, workerData, resourceLimits } = require('worker_threads');
 const CustomError = require('./types/customError');
 const os = require('os');
-const freeMemoryAvailable = os.freemem() / 1024 / 1024; // Convert to MB
-
-const tasks = [];
+const totalMem = os.totalmem();  // Total RAM in bytes
+const formatBytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 
 class TaskManager {
     constructor(idleThreshold = 100) {
@@ -13,8 +12,7 @@ class TaskManager {
 
     canExecuteTask() {
         const now = Date.now();
-        
-        // If no previous task, always allow
+
         if (this.lastTaskTime === null) {
             this.lastTaskTime = now;
             return true;
@@ -39,9 +37,9 @@ class WorkerPool {
     /** Creates a new WorkerPool instance.
      * @param {number} poolSize - The size of the worker pool.
      * @param {string} workerFilePath - The file path of the worker script.
-     * @param {number} minWorkers - The maximum number of workers allowed in the pool.
+     * @param {number} maxWorkers - The maximum number of workers allowed in the pool.
      */
-    constructor(poolSize, workerFilePath, returnLog=true, memThreshold=90) {
+    constructor(poolSize, workerFilePath, returnLog=true, minPercentage=20) {
         process.on('exit', () => {
             this.terminateAllWorkers();
         });
@@ -49,183 +47,151 @@ class WorkerPool {
         process.on('SIGINT', () => {
             process.exit(0);
         });
-
+        this.workerIndex = 0
         /** @type {number} */ this.poolSize = poolSize;
-        /** @type {number} */ this.memThreshold = memThreshold;      
+        /** @type {number} */ this.minPercentage = minPercentage
+        /** @type {number} */ this.maxWorkers = 10;
+        /** @type {number} */ this.maxListener = 11;
         /** @type {boolean} */ this.returnLog = returnLog; 
         /** @type {Array<WorkerObject>} */ this.pool = [];
         /** @type {string} */ this.workerFilePath = workerFilePath;
-
-        this.initialMemory = os.totalmem() - os.freemem(); // Initial memory usage
-        console.log(`Initial Memory Usage: ${this.formatBytes(this.initialMemory)}`);
-        this.buildPool();
+        try {
+            this.buildPool();
+        } catch (error) {
+            throw new CustomError(error.message, 503);
+        }
     }
 
-    formatBytes(bytes) {
-        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-    }
+    deleteWorkerFromPool = () => {
+        if (this.pool.length >= this.maxWorkers ) {
+            const { id, worker } = this.pool.pop();
+            worker.terminate();
+            console.log(`delete ${id} - length ${this.pool.length}`)
+        }
+    };
+
+    nextWorker = () => {
+        return new Promise((resolve) => {
+            this.workerIndex++;
+            if (this.workerIndex >= this.pool.length) this.workerIndex = 0 //Start at the beginning
+            resolve();
+        });
+    };
 
     run = async (task) => {//Main Entry
-        try {
-            let status = 200;
-            if (!taskManager.canExecuteTask()) {
-                status = 429;
+        if (this.pool.length === 0) await this.addWorkerToPool()
+            const workerFromPool = this.pool[this.workerIndex]; // Take last worker from pool
+            const { id, worker } = workerFromPool;
+            try {
+                const freeMemPercentage = await this.checkMemCapacity()
+                const messageListenerCount = worker.listenerCount('message');
+                if (messageListenerCount >= 5) {
+                    await this.nextWorker()
+                 }
+                 
+                const result = await this.executeWorker(worker, task, id)
+
+                // console.log('Message Listeners:', messageListenerCount);
+                // console.log(`using worker ${id}`)
+
+                if (this.returnLog) return { result, log: this.createLog(id, freeMemPercentage)};
+                return { result };  
+            } catch (error) {
+                const { status, message } = error
+                throw new CustomError(message || 'something went wrong', status || 503);
+            }finally{
+
+                //this.pool.push(workerFromPool);
+                //console.log("put back",this.pool.length)
+                //this.deleteWorkerFromPool()
             }
-            return { status, ...await this.runTask(task) };         
-        } catch (err) {
-            return { status: err.status || 500, message: err.message || 'something went wrong' };
-        } finally {
-            this.terminateExcessWorkers();
+            //this.terminateExcessWorkers();
+    };
+
+    checkMemCapacity = async () => {//throw new CustomError('Catch Server capacity is low. Please try again later.', 503);
+        return new Promise((resolve) => {
+        const freeMem = os.freemem();    // Free memory in bytes
+        const freeMemPercentage = parseInt(((freeMem / totalMem) * 100).toFixed(1));
+        //console.log(`${freeMemPercentage} % free capacity`)
+        if (freeMemPercentage <= this.minPercentage ) {
+            throw new CustomError('Catch Server capacity is low. Please try again later.', 503);
         }
+        resolve(freeMemPercentage)
+        })
     };
 
     buildPool = async () => {
-        return new Promise(async (resolve) => {
+        try {
             for (let i = 0; i < this.poolSize; i++) {
-                const worker = new Worker(this.workerFilePath, { workerData });
-                const workerId = `-${i + 1}-`;
+                await this.addWorkerToPool()
+            }                          
+        } catch (error) {
+            throw new CustomError('buildPool failed. Please try again later.', 503);
+        }
+    };
 
-                const handleError = (error) => {
-                    console.error(`Worker ${workerId} error:`, error);
-                };
-                worker.on('error', handleError);
-                this.pool.push({ id: workerId, worker });
-            }
-            resolve();
-        });
-    }
-
-    addNewWorkerToPool = async () => {
+    addWorkerToPool = async () => {
         return new Promise((resolve, reject) => {
             try {
-                if (this.pool.length >= this.poolSize) {
-                    resolve();
-                    return;
-                }
-
                 const newWorker = new Worker(this.workerFilePath, { workerData });
                 const workerId = `-${this.pool.length + 1}-`;
-
-                const beforeMemory = os.totalmem() - os.freemem();
-                const beforeCPU = process.cpuUsage();
-
+                newWorker.setMaxListeners(this.maxListener); // Set a max listener limit
                 newWorker.once('online', () => {
-                const afterMemory = os.totalmem() - os.freemem();
-                const afterCPU = process.cpuUsage(beforeCPU);
-    
-                console.log(`Worker-${workerId} Created | Memory Used: ${this.formatBytes(afterMemory - beforeMemory)}`);
-    
                 const workerItem = { id: workerId, worker: newWorker };
-                    if (this.pool.length < this.poolSize) this.pool.push(workerItem);
+                    this.pool.push(workerItem);
                     resolve(workerItem);
                 });
-                newWorker.on('error', (error) => {
-                    reject(new CustomError(error, 300));
+                newWorker.on('error', (error) => {//add errorlistener
+                    reject(new CustomError(error.message, 300));
                 });
             } catch (error) {
-                reject(new CustomError(error, 300));
+                reject(new CustomError(error.message, 300));
             }
         });
-    }
+    };
 
-    executeWorker = async (workerFromPool, task) => {
-        return new Promise(async (resolve, reject) => {
-            const { id, worker } = workerFromPool;
-            if (!worker || typeof worker.on !== 'function') {
-                const nextWorker = await this.addNewWorkerToPool();
-                return resolve(await this.executeWorker(nextWorker, task));
-            }
-    
-            // Capture resource usage before execution
-            const beforeMemory = process.memoryUsage().heapUsed;
-            const beforeCPU = process.cpuUsage();
-    
-            const cleanup = () => {
-                worker.removeListener('message', messageListener);
-                worker.removeListener('error', errorListener);
-            };
-    
+    executeWorker = async (worker, task, id) => {
+        return new Promise((resolve, reject) => {
             const messageListener = (data) => {
-                // Capture resource usage after execution
-                const afterMemory = process.memoryUsage().heapUsed;
-                const afterCPU = process.cpuUsage(beforeCPU);
-    
-                console.log(`Worker-${id} Executed Task`);
-                console.log(`  Memory Used: ${(afterMemory - beforeMemory) / 1024 / 1024} MB`);
-                console.log(`  CPU Time: User ${afterCPU.user / 1000}ms, System ${afterCPU.system / 1000}ms`);
-    
-                resolve(data);
-                if (this.pool.length < this.poolSize) {
-                    this.pool.push(workerFromPool);
+                worker.removeListener('message', messageListener); // Remove only this task's listener
+                if (worker.listenerCount('message') >= worker.getMaxListeners()) {
+                    console.warn(`Worker-${id} exceeded max listeners! Cleaning...`);
+                    worker.removeAllListeners('message'); // Remove all old listeners
                 }
-                cleanup();
+                resolve(data);
             };
-    
-            const errorListener = (error) => {
-                cleanup();
-                reject(new Error(`Worker-${id} failed during task execution: ${error.message || error}`));
-            };
-    
-            worker.on('message', messageListener);
-            worker.on('error', errorListener);
+            worker.once('message', messageListener); // Attach safely
             try {
                 worker.postMessage(task);
             } catch (err) {
+                worker.removeListener('message', messageListener); // Ensure cleanup on failure
                 reject(new Error(`Worker-${id} failed to post task: ${err.message || err}`));
             }
         });
-    };   
+    };
+    
 
-    createLog(freeWorker_id) {
-        tasks.push(freeWorker_id);
-
+    createLog(freeWorker_id, freeMemPercentage) {
+        const mem = process.memoryUsage();     
         return {
-            worker: freeWorker_id, 
+            worker: freeWorker_id,
             poolLength: `${this.pool.length} worker`,
-            executed: `${tasks.length} tasks`,
-        };
-    }
-
-    getMemPercent = () => {
-        const freeMemory = os.freemem() / 1024 / 1024; // Convert to MB
-        const memUsed = freeMemoryAvailable - freeMemory;
-        const memPercent = ((memUsed / freeMemoryAvailable) * 100).toFixed(1);
-    
-        if (memPercent > this.memThreshold) {
-            throw new CustomError('Server capacity is low. Please try again later.', 503);
-        }
-    
-        return memPercent < this.memThreshold
+            RSS: `${(mem.rss / 1024 / 1024).toFixed(2)} MB`,
+            heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+            freeMemPercentage
+            };
     };
-    
-    runTask = async (task) => {
-        while (this.pool.length === 0) {
-            await this.buildPool();
-        }
-        const freeWorker = this.pool.shift(); // Get a worker
-        const memStats = this.getMemPercent(); // Check memory before task execution
-        const result = await this.executeWorker(freeWorker, task);
-        if (this.returnLog) {
-            result.log = this.createLog(freeWorker.id);
-        }
-        result.capacity = memStats
-        return { result };
-    };
-
-    terminateExcessWorkers() {
-        while (this.pool.length > this.minWorkers) {
-            console.log('terminateExcessWorkers', this.pool.length);
-            const { worker } = this.pool.pop();
-            worker.terminate();
-        }
-    }
 
     terminateAllWorkers() {
         while (this.pool.length > 0) {
-            const { worker } = this.pool.pop();
+            const { id, worker } = this.pool.pop();
+    
+            // Log the number of listeners before termination
+            console.log(`Worker ${id} has ${worker.listenerCount('message')} message listeners and ${worker.listenerCount('error')} error listeners before termination.`);
             worker.terminate();
         }
-    }
+    };
+    
 }
 
 module.exports = WorkerPool;
