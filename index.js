@@ -99,6 +99,7 @@ class WorkerPool {
                 if (this.returnLog) return { result, log: this.createLog(id, freeMemPercentage)};
                 return { result };  
             } catch (error) {
+                console.log(error)
                 const { status, message } = error
                 throw new CustomError(message || 'something went wrong', status || 503);
             }finally{
