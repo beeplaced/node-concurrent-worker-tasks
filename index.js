@@ -187,7 +187,7 @@ class WorkerPool {
             const { id, worker } = this.pool.pop();
     
             // Log the number of listeners before termination
-            console.log(`Worker ${id} has ${worker.listenerCount('message')} message listeners and ${worker.listenerCount('error')} error listeners before termination.`);
+            //console.log(`Worker ${id} has ${worker.listenerCount('message')} message listeners and ${worker.listenerCount('error')} error listeners before termination.`);
             worker.terminate();
         }
     };
