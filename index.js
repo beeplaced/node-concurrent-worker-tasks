@@ -167,13 +167,13 @@ class WorkerPool {
             try {
                 worker.postMessage(task);
             } catch (err) {
+                console.log("executeWorker",err)
                 worker.removeListener('message', messageListener); // Ensure cleanup on failure
                 reject(new Error(`Worker-${id} failed to post task: ${err.message || err}`));
             }
         });
     };
     
-
     createLog(freeWorker_id, freeMemPercentage) {
         const mem = process.memoryUsage();     
         return {
