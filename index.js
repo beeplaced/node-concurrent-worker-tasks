@@ -6,7 +6,6 @@ const formatBytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 console.log("totalMem",formatBytes(totalMem))
 console.log("freeMem",formatBytes(os.freemem()))
 
-
 class TaskManager {
     constructor(idleThreshold = 100) {
         this.lastTaskTime = null;
@@ -43,7 +42,6 @@ class WorkerPool {
      * @param {number} maxWorkers - The maximum number of workers allowed in the pool.
      */
     constructor(poolSize, workerFilePath, returnLog=true, minPercentage=20) {
-        console.log("build")
         process.on('exit', () => {
             this.terminateAllWorkers();
         });
@@ -83,7 +81,6 @@ class WorkerPool {
     };
 
     run = async (task) => {//Main Entry
-        console.log("run")
         if (this.pool.length === 0) await this.addWorkerToPool()
             const workerFromPool = this.pool[this.workerIndex]; // Take last worker from pool
             const { id, worker } = workerFromPool;
@@ -120,7 +117,7 @@ class WorkerPool {
         const freeMemPercentage = parseInt(((freeMem / totalMem) * 100).toFixed(1));
         //console.log(`${freeMemPercentage} % free capacity`)
         if (freeMemPercentage <= this.minPercentage ) {
-            throw new CustomError('Catch Server capacity is low. Please try again later.', 503);
+            //throw new CustomError('Catch Server capacity is low. Please try again later.', 503);
         }
         resolve(freeMemPercentage)
         })
