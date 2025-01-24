@@ -11,7 +11,7 @@ class WorkerPool {
      * @param {number} poolSize - The number of workers in the pool.
      * @param {string} workerFilePath - The worker script path.
      * @param {boolean} returnLog - Whether to return log details.
-     * @param {number} minPercentage - Minimum free memory percentage.
+     * @param {number} minPercentage - Minimum free memory percentage. not used aot
      */
     constructor(poolSize, workerFilePath, returnLog = true, minPercentage = 20) {
         process.on('exit', () => this.terminateAllWorkers());
